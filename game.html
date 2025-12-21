@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Quest for the Golden Gate</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;700&display=swap');
+        body {
+            font-family: 'Lexend', sans-serif;
+            touch-action: manipulation;
+            background-color: #f0f4f8;
+        }
+        canvas {
+            image-rendering: pixelated;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+            max-width: 100%; 
+            height: auto;
+        }
+        .modal-enter {
+            animation: scaleUp 0.3s ease-out forwards;
+        }
+        @keyframes scaleUp {
+            from { transform: scale(0.8); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-start min-h-screen p-4 sm:justify-center">
+
+    <!-- Game Header -->
+    <div class="w-full max-w-[400px] mb-4 flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm">
+        <div>
+            <h1 class="text-lg font-bold text-slate-800" id="level-title">Level 1</h1>
+            <p class="text-[10px] sm:text-xs text-slate-500 font-medium" id="level-desc">Find the key to open the door.</p>
+        </div>
+        <div class="text-right">
+            <span class="text-xs font-bold bg-blue-100 text-blue-600 px-3 py-1 rounded-full" id="stat-display">Lvl 1/10</span>
+        </div>
+    </div>
+
+    <!-- Game Container -->
+    <div class="relative w-full max-w-[400px]">
+        <canvas id="gameCanvas" width="400" height="400" class="rounded-xl bg-white border-4 border-white mx-auto block"></canvas>
+        
+        <!-- Dialog Overlay -->
+        <div id="dialog-overlay" class="hidden absolute inset-0 flex items-center justify-center bg-black/40 rounded-xl backdrop-blur-[2px] p-6">
+            <div class="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-[280px] text-center modal-enter">
+                <p id="dialog-text" class="text-slate-700 font-medium mb-4">Hello there!</p>
+                <div id="dialog-options" class="flex flex-col gap-2">
+                    <!-- Options injected here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Level Complete Overlay -->
+        <div id="complete-overlay" class="hidden absolute inset-0 flex items-center justify-center bg-green-500/90 rounded-xl backdrop-blur-sm p-6 text-center">
+            <div class="text-white">
+                <div class="text-5xl mb-4">🎉</div>
+                <h2 class="text-3xl font-bold mb-2">Level Clear!</h2>
+                <p class="mb-6 opacity-90">Great job, adventurer.</p>
+                <button onclick="nextLevel()" class="bg-white text-green-600 font-bold px-8 py-3 rounded-full shadow-lg hover:bg-slate-100 transition-colors">
+                    Continue
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Info Footer -->
+    <div class="mt-8 text-slate-400 text-[10px] text-center mb-8">
+        Use Keyboard Arrow Keys to Move • Press 'R' to Restart Level
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const TILE_SIZE = 40;
+        const GRID_SIZE = 10;
+
+        let currentLevel = 0;
+        let player = { x: 1, y: 1 };
+        let levelData = {};
+        let gameState = {
+            hasKey: false,
+            doorUnlocked: false,
+            starsCollected: 0,
+            stepStage: 0,
+            gameActive: true,
+            timer: 0,
+            fireballs: []
+        };
+
+        function generateMathProblem() {
+            const ops = ['+', '-', '*', '/'];
+            const op = ops[Math.floor(Math.random() * ops.length)];
+            let a, b, answer;
+            switch(op) {
+                case '+':
+                    a = Math.floor(Math.random() * 20) + 1;
+                    b = Math.floor(Math.random() * 20) + 1;
+                    answer = a + b;
+                    break;
+                case '-':
+                    a = Math.floor(Math.random() * 20) + 10;
+                    b = Math.floor(Math.random() * a) + 1;
+                    answer = a - b;
+                    break;
+                case '*':
+                    a = Math.floor(Math.random() * 10) + 1;
+                    b = Math.floor(Math.random() * 10) + 1;
+                    answer = a * b;
+                    break;
+                case '/':
+                    // Ensure integer result
+                    answer = Math.floor(Math.random() * 10) + 1;
+                    b = Math.floor(Math.random() * 9) + 2;
+                    a = b * answer;
+                    break;
+            }
+            // Generate a fake answer that isn't the real one
+            let decoy = answer + (Math.random() > 0.5 ? 1 : -1);
+            if (decoy < 0) decoy = answer + 2;
+
+            return { 
+                text: `${a} ${op} ${b} = ?`, 
+                correct: answer,
+                options: Math.random() > 0.5 ? [answer, decoy] : [decoy, answer]
+            };
+        }
+
+        const levels = [
+            {
+                title: "Level 1: The Key",
+                desc: "Find the golden key to unlock the door.",
+                setup: () => {
+                    levelData.door = { x: 8, y: 1 };
+                    levelData.key = { x: 8, y: 8 };
+                    levelData.walls = createOuterWalls(levelData.door);
+                }
+            },
+            {
+                title: "Level 2: Math Gate",
+                desc: "The Wise Owl has a different question every time!",
+                setup: () => {
+                    levelData.door = { x: 5, y: 1 };
+                    levelData.npc = { x: 5, y: 3, type: 'owl' };
+                    levelData.mathProblem = generateMathProblem();
+                    levelData.walls = createOuterWalls(levelData.door);
+                }
+            },
+            {
+                title: "Level 3: Order Buttons",
+                desc: "Step on buttons in order: 1 → 2 → 3",
+                setup: () => {
+                    levelData.door = { x: 5, y: 1 };
+                    levelData.buttons = [
+                        { x: 2, y: 5, val: 1 },
+                        { x: 7, y: 5, val: 2 },
+                        { x: 5, y: 8, val: 3 }
+                    ];
+                    levelData.walls = createOuterWalls(levelData.door);
+                }
+            },
+            {
+                title: "Level 4: Star Collector",
+                desc: "Collect all 5 stars to open the path.",
+                setup: () => {
+                    levelData.door = { x: 5, y: 0 };
+                    levelData.stars = [{x:2,y:2}, {x:7,y:2}, {x:2,y:7}, {x:7,y:7}, {x:5,y:5}];
+                    levelData.walls = [
+                        ...createOuterWalls(levelData.door), 
+                        {x:3,y:3}, {x:3,y:4}, {x:3,y:5}, {x:6,y:3}, {x:6,y:4}, {x:6,y:5}
+                    ];
+                }
+            },
+            {
+                title: "Level 5: Sokoban Lite",
+                desc: "Push the heavy box onto the red switch.",
+                setup: () => {
+                    player = {x:2, y:5};
+                    levelData.door = { x: 9, y: 5 };
+                    levelData.box = { x: 4, y: 5 };
+                    levelData.plate = { x: 7, y: 5 };
+                    levelData.walls = createOuterWalls(levelData.door);
+                }
+            },
+            {
+                title: "Level 6: The Painter",
+                desc: "Walk over all the gray tiles to light them up.",
+                setup: () => {
+                    const tiles = [];
+                    for(let x=3; x<=6; x++) {
+                        for(let y=3; y<=6; y++) tiles.push({x, y, lit: false});
+                    }
+                    levelData.door = { x: 5, y: 1 };
+                    levelData.paintTiles = tiles;
+                    levelData.walls = createOuterWalls(levelData.door);
+                }
+            },
+            {
+                title: "Level 7: Hungry Guard",
+                desc: "Find the apple for the hungry bear.",
+                setup: () => {
+                    levelData.door = { x: 9, y: 2 };
+                    levelData.npc = { x: 7, y: 2, type: 'bear', hungry: true };
+                    levelData.item = { x: 2, y: 8, type: 'apple' };
+                    levelData.walls = createOuterWalls(levelData.door);
+                }
+            },
+            {
+                title: "Level 8: The Maze",
+                desc: "Navigate the maze and press the switch to unlock the door!",
+                setup: () => {
+                    player = { x: 1, y: 1 };
+                    levelData.door = { x: 8, y: 8 };
+                    gameState.doorUnlocked = false;
+                    // Clearance Button
+                    levelData.clearanceButton = { x: 7, y: 8 }; 
+                    levelData.walls = [
+                        ...createOuterWalls(levelData.door),
+                        {x:2, y:1}, {x:2, y:2}, {x:2, y:3}, {x:2, y:4}, {x:2, y:5}, {x:2, y:6}, {x:2, y:7}, 
+                        {x:4, y:2}, {x:4, y:3}, {x:4, y:4}, {x:4, y:5}, {x:4, y:6}, {x:4, y:7}, {x:4, y:8},
+                        {x:6, y:1}, {x:6, y:2}, {x:6, y:3}, {x:6, y:4}, {x:6, y:5}, {x:6, y:6}, {x:6, y:7},
+                        {x:7, y:4}, {x:8, y:4} 
+                    ];
+                    levelData.lethalWalls = true;
+                }
+            },
+            {
+                title: "Level 9: Survival",
+                desc: "Survive the fireballs for 10 seconds!",
+                setup: () => {
+                    player = {x:5, y:5};
+                    gameState.timer = 10;
+                    gameState.fireballs = [];
+                    levelData.door = { x: 5, y: 0 };
+                    levelData.walls = createOuterWalls(levelData.door);
+                    
+                    const survivalIdx = currentLevel;
+                    const interval = setInterval(() => {
+                        if (currentLevel !== survivalIdx || !gameState.gameActive) {
+                            clearInterval(interval);
+                            return;
+                        }
+                        gameState.timer -= 1;
+                        if (gameState.timer <= 0) {
+                            gameState.timer = 0;
+                            gameState.doorUnlocked = true;
+                            gameState.fireballs = [];
+                            clearInterval(interval);
+                            draw();
+                        } else {
+                            spawnFireball();
+                        }
+                    }, 1000);
+                }
+            },
+            {
+                title: "Level 10: The Choice",
+                desc: "One lever is correct. Look for the flower.",
+                setup: () => {
+                    levelData.door = { x: 5, y: 1 };
+                    levelData.levers = [
+                        {x: 2, y: 5, correct: false},
+                        {x: 5, y: 5, correct: true},
+                        {x: 8, y: 5, correct: false}
+                    ];
+                    levelData.deco = {x: 5, y: 6, icon: '🌸'};
+                    levelData.walls = createOuterWalls(levelData.door);
+                }
+            }
+        ];
+
+        function createOuterWalls(doorPos) {
+            const walls = [];
+            for (let i = 0; i < GRID_SIZE; i++) {
+                if (!(i === doorPos?.x && 0 === doorPos?.y)) walls.push({ x: i, y: 0 });
+                if (!(i === doorPos?.x && (GRID_SIZE - 1) === doorPos?.y)) walls.push({ x: i, y: GRID_SIZE - 1 });
+                if (!(0 === doorPos?.x && i === doorPos?.y)) walls.push({ x: 0, y: i });
+                if (!((GRID_SIZE - 1) === doorPos?.x && i === doorPos?.y)) walls.push({ x: GRID_SIZE - 1, y: i });
+            }
+            return walls;
+        }
+
+        function initLevel(index) {
+            if (index < 0 || index >= levels.length) return;
+            
+            currentLevel = index;
+            gameState = {
+                hasKey: false,
+                doorUnlocked: false,
+                starsCollected: 0,
+                stepStage: 0,
+                gameActive: true,
+                timer: 0,
+                fireballs: []
+            };
+            player = { x: 1, y: 1 };
+            levelData = { lethalWalls: false };
+            
+            const level = levels[index];
+            document.getElementById('level-title').innerText = level.title;
+            document.getElementById('level-desc').innerText = level.desc;
+            document.getElementById('stat-display').innerText = `Lvl ${index + 1}/10`;
+            document.getElementById('complete-overlay').classList.add('hidden');
+            document.getElementById('dialog-overlay').classList.add('hidden');
+            
+            level.setup();
+            draw();
+            
+            if (index === 8) moveFireballs();
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw Grid
+            ctx.strokeStyle = '#f1f5f9';
+            for (let i = 0; i < GRID_SIZE; i++) {
+                for (let j = 0; j < GRID_SIZE; j++) {
+                    ctx.strokeRect(i * TILE_SIZE, j * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                }
+            }
+
+            // Draw Paint Tiles (Lvl 6)
+            if (levelData.paintTiles) {
+                levelData.paintTiles.forEach(t => {
+                    ctx.fillStyle = t.lit ? '#fef08a' : '#e2e8f0';
+                    ctx.fillRect(t.x * TILE_SIZE + 2, t.y * TILE_SIZE + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+                });
+            }
+
+            // Draw Pressure Plate (Lvl 5)
+            if (levelData.plate) {
+                ctx.fillStyle = '#fca5a5';
+                ctx.beginPath();
+                ctx.roundRect(levelData.plate.x * TILE_SIZE + 5, levelData.plate.y * TILE_SIZE + 5, TILE_SIZE - 10, TILE_SIZE - 10, 8);
+                ctx.fill();
+            }
+
+            // Draw Walls
+            levelData.walls.forEach(w => {
+                ctx.fillStyle = levelData.lethalWalls ? '#fee2e2' : '#cbd5e1';
+                ctx.fillRect(w.x * TILE_SIZE, w.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                if (levelData.lethalWalls && !isEdge(w.x, w.y)) {
+                    ctx.font = "20px Arial";
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText("⚡", w.x * TILE_SIZE + 20, w.y * TILE_SIZE + 22);
+                }
+            });
+
+            function isEdge(x, y) {
+                return x === 0 || y === 0 || x === GRID_SIZE - 1 || y === GRID_SIZE - 1;
+            }
+
+            // Draw Elements
+            ctx.font = "24px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+
+            if (levelData.key && !gameState.hasKey) ctx.fillText("🔑", levelData.key.x * TILE_SIZE + 20, levelData.key.y * TILE_SIZE + 22);
+            if (levelData.door) ctx.fillText(gameState.doorUnlocked ? "🔓" : "🚪", levelData.door.x * TILE_SIZE + 20, levelData.door.y * TILE_SIZE + 22);
+            if (levelData.npc) {
+                const icon = levelData.npc.type === 'owl' ? "🦉" : (levelData.npc.hungry ? "🐻" : "🧸");
+                ctx.fillText(icon, levelData.npc.x * TILE_SIZE + 20, levelData.npc.y * TILE_SIZE + 22);
+            }
+            if (levelData.item && !gameState.hasKey) ctx.fillText("🍎", levelData.item.x * TILE_SIZE + 20, levelData.item.y * TILE_SIZE + 22);
+            if (levelData.stars) {
+                levelData.stars.forEach(s => ctx.fillText("⭐", s.x * TILE_SIZE + 20, s.y * TILE_SIZE + 22));
+            }
+            if (levelData.buttons) {
+                levelData.buttons.forEach(b => {
+                    ctx.fillStyle = "#3b82f6";
+                    ctx.fillText(b.val, b.x * TILE_SIZE + 20, b.y * TILE_SIZE + 22);
+                });
+            }
+            if (levelData.box) ctx.fillText("📦", levelData.box.x * TILE_SIZE + 20, levelData.box.y * TILE_SIZE + 22);
+            if (levelData.clearanceButton) {
+                ctx.fillText(gameState.doorUnlocked ? "🔘" : "🕹️", levelData.clearanceButton.x * TILE_SIZE + 20, levelData.clearanceButton.y * TILE_SIZE + 22);
+            }
+            if (levelData.levers) {
+                levelData.levers.forEach(l => ctx.fillText("🕹️", l.x * TILE_SIZE + 20, l.y * TILE_SIZE + 22));
+                ctx.fillText(levelData.deco.icon, levelData.deco.x * TILE_SIZE + 20, levelData.deco.y * TILE_SIZE + 22);
+            }
+
+            // Survival Timer
+            if (gameState.timer > 0) {
+                ctx.fillStyle = "#ef4444";
+                ctx.font = "bold 20px Arial";
+                ctx.fillText(`⏱️ ${gameState.timer}s`, 200, 200);
+            }
+
+            // Fireballs
+            gameState.fireballs.forEach(f => {
+                ctx.fillText("🔥", f.x * TILE_SIZE + 20, f.y * TILE_SIZE + 22);
+            });
+
+            // Player
+            ctx.fillText("🧑‍🚀", player.x * TILE_SIZE + 20, player.y * TILE_SIZE + 22);
+
+            // Watermark
+            ctx.save();
+            ctx.font = "bold 14px Lexend, sans-serif";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+            ctx.fillStyle = "rgba(100, 116, 139, 0.4)"; // Slate-500 with opacity
+            ctx.fillText("陳若瑄", 8, 8);
+            ctx.restore();
+        }
+
+        function handleMove(dx, dy) {
+            if (!gameState.gameActive) return;
+            const newX = player.x + dx;
+            const newY = player.y + dy;
+            if (newX < 0 || newX >= GRID_SIZE || newY < 0 || newY >= GRID_SIZE) return;
+            
+            const hitWall = levelData.walls.find(w => w.x === newX && w.y === newY);
+            if (hitWall) {
+                if (levelData.lethalWalls) initLevel(currentLevel);
+                return;
+            }
+
+            // NPC Interaction
+            if (levelData.npc && newX === levelData.npc.x && newY === levelData.npc.y) {
+                if (levelData.npc.type === 'bear' && !levelData.npc.hungry) {
+                    // Path clear
+                } else {
+                    if (levelData.npc.type === 'owl') {
+                        const prob = levelData.mathProblem;
+                        showDialog(prob.text, [
+                            { 
+                                text: `A) ${prob.options[0]}`, 
+                                action: () => { 
+                                    if (prob.options[0] === prob.correct) {
+                                        gameState.doorUnlocked = true;
+                                    }
+                                    closeDialog(); 
+                                    draw(); 
+                                } 
+                            },
+                            { 
+                                text: `B) ${prob.options[1]}`, 
+                                action: () => { 
+                                    if (prob.options[1] === prob.correct) {
+                                        gameState.doorUnlocked = true;
+                                    }
+                                    closeDialog(); 
+                                    draw(); 
+                                } 
+                            }
+                        ]);
+                    } else if (levelData.npc.type === 'bear') {
+                        if (gameState.hasKey) {
+                            levelData.npc.hungry = false;
+                            gameState.doorUnlocked = true;
+                            showDialog("Thank you! You may pass.", [{text: "Awesome!", action: () => { closeDialog(); draw(); }}]);
+                        } else {
+                            showDialog("I am so hungry... do you have an apple?", [{text: "I'll find one!", action: closeDialog}]);
+                        }
+                    }
+                    return; 
+                }
+            }
+
+            // Box Pushing
+            if (levelData.box && newX === levelData.box.x && newY === levelData.box.y) {
+                if (levelData.box.x === levelData.plate.x && levelData.box.y === levelData.plate.y) {
+                    return;
+                }
+                const boxNewX = newX + dx;
+                const boxNewY = newY + dy;
+                const wallBlock = levelData.walls.find(w => w.x === boxNewX && w.y === boxNewY);
+                if (!wallBlock && boxNewX >= 0 && boxNewX < GRID_SIZE && boxNewY >= 0 && boxNewY < GRID_SIZE) {
+                    levelData.box.x = boxNewX;
+                    levelData.box.y = boxNewY;
+                    gameState.doorUnlocked = (levelData.box.x === levelData.plate.x && levelData.box.y === levelData.plate.y);
+                } else {
+                    return;
+                }
+            }
+
+            player.x = newX;
+            player.y = newY;
+            checkLogic();
+            draw();
+        }
+
+        function checkLogic() {
+            if (levelData.key && player.x === levelData.key.x && player.y === levelData.key.y) {
+                gameState.hasKey = true;
+                gameState.doorUnlocked = true;
+            }
+            if (levelData.buttons) {
+                const btn = levelData.buttons.find(b => b.x === player.x && b.y === player.y);
+                if (btn) {
+                    if (btn.val === gameState.stepStage + 1) {
+                        gameState.stepStage++;
+                        if (gameState.stepStage === 3) gameState.doorUnlocked = true;
+                    } else {
+                        gameState.stepStage = 0;
+                    }
+                }
+            }
+            if (levelData.stars) {
+                const starIdx = levelData.stars.findIndex(s => s.x === player.x && s.y === player.y);
+                if (starIdx > -1) {
+                    levelData.stars.splice(starIdx, 1);
+                    if (levelData.stars.length === 0) gameState.doorUnlocked = true;
+                }
+            }
+            if (levelData.paintTiles) {
+                const tile = levelData.paintTiles.find(t => t.x === player.x && t.y === player.y);
+                if (tile) tile.lit = true;
+                if (levelData.paintTiles.every(t => t.lit)) gameState.doorUnlocked = true;
+            }
+            if (levelData.item && player.x === levelData.item.x && player.y === levelData.item.y) {
+                gameState.hasKey = true;
+            }
+            // Level 8 Clearance Button
+            if (levelData.clearanceButton && player.x === levelData.clearanceButton.x && player.y === levelData.clearanceButton.y) {
+                gameState.doorUnlocked = true;
+            }
+            // Level 10 Lever Choice
+            if (levelData.levers) {
+                const lever = levelData.levers.find(l => l.x === player.x && l.y === player.y);
+                if (lever) {
+                    if (lever.correct) {
+                        if (!gameState.doorUnlocked) {
+                            gameState.doorUnlocked = true;
+                            showDialog("Correct! The final gate is now open!", [{text: "Proceed to Exit", action: closeDialog}]);
+                        }
+                    } else {
+                        player = {x: 1, y: 1};
+                    }
+                }
+            }
+            if (levelData.door && player.x === levelData.door.x && player.y === levelData.door.y) {
+                if (gameState.doorUnlocked) levelComplete();
+            }
+        }
+
+        function spawnFireball() {
+            const side = Math.floor(Math.random() * 4);
+            let f = {x: 0, y: 0, dx: 0, dy: 0};
+            if (side === 0) { f.x = 0; f.y = Math.floor(Math.random()*8)+1; f.dx = 1; }
+            if (side === 1) { f.x = 9; f.y = Math.floor(Math.random()*8)+1; f.dx = -1; }
+            if (side === 2) { f.y = 0; f.x = Math.floor(Math.random()*8)+1; f.dy = 1; }
+            if (side === 3) { f.y = 9; f.x = Math.floor(Math.random()*8)+1; f.dy = -1; }
+            gameState.fireballs.push(f);
+        }
+
+        function moveFireballs() {
+            if (currentLevel !== 8 || !gameState.gameActive) return;
+            gameState.fireballs.forEach((f) => {
+                f.x += f.dx * 0.1;
+                f.y += f.dy * 0.1;
+                const dist = Math.sqrt(Math.pow(f.x - player.x, 2) + Math.pow(f.y - player.y, 2));
+                if (dist < 0.6) initLevel(8);
+            });
+            draw();
+            if (gameState.gameActive && gameState.timer >= 0) requestAnimationFrame(moveFireballs);
+        }
+
+        function levelComplete() {
+            gameState.gameActive = false;
+            if (currentLevel < levels.length - 1) {
+                document.getElementById('complete-overlay').classList.remove('hidden');
+            } else {
+                showDialog("You've conquered the Golden Gate! You are a true master.", [{text: "Replay", action: () => initLevel(0)}]);
+            }
+        }
+
+        function nextLevel() {
+            if (currentLevel < levels.length - 1) {
+                initLevel(currentLevel + 1);
+            } else {
+                levelComplete();
+            }
+        }
+
+        function showDialog(text, options) {
+            document.getElementById('dialog-text').innerText = text;
+            const container = document.getElementById('dialog-options');
+            container.innerHTML = '';
+            options.forEach(opt => {
+                const btn = document.createElement('button');
+                btn.className = "bg-slate-800 text-white font-bold py-2 px-4 rounded-xl hover:bg-slate-700 transition-colors text-sm";
+                btn.innerText = opt.text;
+                btn.onclick = opt.action;
+                container.appendChild(btn);
+            });
+            document.getElementById('dialog-overlay').classList.remove('hidden');
+        }
+
+        function closeDialog() {
+            document.getElementById('dialog-overlay').classList.add('hidden');
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) e.preventDefault();
+            if (e.key === 'ArrowUp') handleMove(0, -1);
+            if (e.key === 'ArrowDown') handleMove(0, 1);
+            if (e.key === 'ArrowLeft') handleMove(-1, 0);
+            if (e.key === 'ArrowRight') handleMove(1, 0);
+            if (e.key.toLowerCase() === 'r') initLevel(currentLevel);
+        });
+
+        initLevel(0);
+    </script>
+</body>
+</html>
